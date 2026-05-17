@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌾 AGRI-SMART Dashboard</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+
+        /* ── FIX CARTE : html+body doivent avoir height:100% ── */
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Segoe UI', sans-serif;
+            background: #f0f7f0;
+        }
+
+        .header {
+            height: 58px;
+            background: linear-gradient(135deg,#1b4332,#2d6a4f);
+            color: white; padding: 0 28px;
+            display: flex; align-items: center; gap: 12px;
+            flex-shrink: 0; position: relative; z-index: 10;
+        }
+        .header h1 { font-size:22px; }
+        .header p  { font-size:12px; opacity:.8; }
+        .status-dot {
+            margin-left:auto; width:10px; height:10px;
+            background:#52b788; border-radius:50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+        .main {
+            display: grid;
+            grid-template-columns: 380px 1fr;
+            height: calc(100vh - 58px);  /* ← hauteur explicite */
+            overflow: hidden;
+        }
+
+        /* ── PANNEAU GAUCHE ── */
+        .panel {
+            background: white; overflow-y: auto; overflow-x: hidden;
+            padding: 13px; box-shadow: 2px 0 10px rgba(0,0,0,.08);
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        .panel-section {
+            background: #f8f9fa; border-radius: 12px;
+            padding: 12px 14px; border: 1px solid #e9ecef; flex-shrink: 0;
+        }
+        .panel-section h3 {
+            color: #1b4332; font-size: 13px; font-weight: 600;
+            margin-bottom: 9px; display:flex; align-items:center; gap:6px;
+        }
+
+        .search-box { display:flex; gap:6px; }
+        .search-box input {
+            flex:1; padding:9px 12px; border:1.5px solid #dee2e6;
+            border-radius:8px; font-size:13px; outline:none;
+        }
+        .search-box input:focus { border-color:#52b788; }
+        .btn-search { background:#2d6a4f; color:white; border:none; padding:9px 14px; border-radius:8px; cursor:pointer; font-size:13px; }
+        .btn-gps    { background:#0077b6; color:white; border:none; padding:9px 12px; border-radius:8px; cursor:pointer; font-size:15px; }
+
+        .coords-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
+        .coords-grid label { font-size:11px; color:#666; display:block; margin-bottom:3px; }
+        .coords-grid input { width:100%; padding:8px 10px; border:1.5px solid #dee2e6; border-radius:7px; font-size:13px; outline:none; }
+        .coords-grid input:focus { border-color:#0077b6; }
+        .btn-apply-coords { width:100%; padding:9px; background:#0077b6; color:white; border:none; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600; }
+
+        .info-row { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid #e9ecef; font-size:12px; }
+        .info-row:last-child { border-bottom:none; }
+        .info-row .key { color:#666; }
+        .info-row .value { font-weight:600; color:#1b4332; }
+
+        .surface-row { display:flex; align-items:center; gap:8px; }
+        .surface-row input { flex:1; padding:9px 12px; border:1.5px solid #dee2e6; border-radius:8px; font-size:14px; font-weight:600; outline:none; }
+        .surface-row select { padding:9px; border:1.5px solid #dee2e6; border-radius:8px; font-size:12px; outline:none; }
+
+        .culture-select { width:100%; padding:9px 12px; border:1.5px solid #dee2e6; border-radius:8px; font-size:13px; outline:none; }
+
+        .btn-predict {
+            background:linear-gradient(135deg,#2d6a4f,#52b788);
+            color:white; border:none; padding:14px; border-radius:10px;
+            font-size:15px; font-weight:600; cursor:pointer; width:100%; flex-shrink:0;
+            transition:transform .2s, box-shadow .2s;
+        }
+        .btn-predict:hover { transform:translateY(-2px); box-shadow:0 5px 15px rgba(82,183,136,.4); }
+        .btn-predict:disabled { opacity:.6; cursor:not-allowed; transform:none; }
+        .hint { font-size:11px; color:#888; text-align:center; line-height:1.5; }
+
+        /* ── CARTE : position absolute pour remplir son conteneur ── */
+        .map-wrapper {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        #map {
+            position: absolute;
+            inset: 0;   /* top:0 right:0 bottom:0 left:0 */
+            z-index: 1;
+        }
+
+        /* ── RÉSULTATS OVERLAY ── */
+        .results-overlay {
+            display:none; position:absolute; top:12px; right:12px; width:355px;
+            background:white; border-radius:14px;
+            box-shadow:0 8px 30px rgba(0,0,0,.18); z-index:1100; overflow:hidden;
+            max-height:calc(100% - 24px); overflow-y:auto;
+        }
+        .results-header {
+            background:linear-gradient(135deg,#1b4332,#2d6a4f);
+            color:white; padding:14px 16px; display:flex; align-items:center; gap:12px;
+        }
+        .res-emoji { font-size:34px; }
+        .res-title { font-size:19px; font-weight:700; text-transform:capitalize; }
+        .res-sub   { font-size:11px; opacity:.8; margin-top:2px; }
+        .res-conf  { margin-left:auto; background:rgba(255,255,255,.15); border:2px solid rgba(255,255,255,.3); border-radius:50px; padding:7px 12px; text-align:center; }
+        .res-conf .v { font-size:19px; font-weight:700; }
+        .res-conf .l { font-size:10px; opacity:.8; }
+        .results-body { padding:13px; }
+
+        .metrics-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
+        .metric { background:#f8f9fa; border-radius:10px; padding:10px; text-align:center; border-top:3px solid; }
+        .metric .icon { font-size:20px; }
+        .metric .val  { font-size:17px; font-weight:700; margin:3px 0 1px; }
+        .metric .unit { font-size:10px; color:#888; }
+        .metric .lbl  { font-size:11px; color:#555; margin-top:1px; }
+
+        .totaux { background:#e8f5e9; border-radius:10px; padding:10px 14px; margin-bottom:10px; border-left:4px solid #52b788; }
+        .totaux h4 { font-size:12px; color:#1b4332; margin-bottom:6px; font-weight:600; }
+        .totaux-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+        .totaux-item { font-size:11px; color:#2d6a4f; }
+        .totaux-item .tv { font-weight:700; font-size:13px; }
+
+        .cond-row { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid #f0f0f0; font-size:12px; }
+        .cond-row:last-child { border-bottom:none; }
+        .cond-row .k { color:#666; }
+        .cond-row .v { font-weight:600; color:#1b4332; }
+
+        .ndvi-bar-wrap { margin-top:8px; }
+        .ndvi-bar-bg { height:6px; background:#e9ecef; border-radius:3px; overflow:hidden; margin-top:3px; }
+        .ndvi-bar-fill { height:100%; border-radius:3px; background:#52b788; transition:width 1s ease; }
+
+        .btn-close { width:100%; background:#f8f9fa; border:1px solid #dee2e6; border-radius:8px; padding:9px; cursor:pointer; font-size:12px; color:#666; margin-top:8px; }
+
+        /* ── LOADING ── */
+        .loading-overlay {
+            display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
+            z-index:3000; align-items:center; justify-content:center;
+            flex-direction:column; color:white; text-align:center;
+        }
+        .loading-overlay.show { display:flex; }
+        .spinner { width:48px; height:48px; border:5px solid rgba(255,255,255,.3); border-top-color:#52b788; border-radius:50%; animation:spin .8s linear infinite; margin-bottom:18px; }
+        @keyframes spin { to { transform:rotate(360deg); } }
+        .loading-steps { font-size:13px; opacity:.8; margin-top:6px; }
+
+        /* ── NDVI badge & fiche ── */
+        .ndvi-badge {
+            display:none; position:absolute; bottom:15px; left:15px;
+            background:rgba(27,67,50,.93); color:white;
+            padding:8px 16px; border-radius:20px; font-size:12px; z-index:900;
+        }
+        .ndvi-fiche {
+            display:none; position:absolute;
+            bottom: 170px; left: 10px;
+            background:rgba(15,50,35,.95); color:white;
+            border-radius:14px; padding:16px; z-index:900; width:225px;
+            box-shadow:0 4px 20px rgba(0,0,0,.35);
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div>
+        <h1>🌾 AGRI-SMART</h1>
+        <p>Système intelligent de recommandation agricole</p>
+    </div>
+    <div class="status-dot"></div>
+</div>
+
+<div class="main">
+
+    <!-- ══ PANNEAU GAUCHE ══ -->
+    <div class="panel">
+
+        <div class="panel-section">
+            <h3>🔍 Localiser par ville / région</h3>
+            <div class="search-box">
+                <input type="text" id="search-input" placeholder="Ex: Meknès, Maroc..."
+                       onkeydown="if(event.key==='Enter') searchAddress()">
+                <button class="btn-search" onclick="searchAddress()">🔍</button>
+                <button class="btn-gps" onclick="useMyLocation()">📍</button>
+            </div>
+            <p class="hint" style="margin-top:6px;">
+                Puis <strong>cliquez sur la carte</strong> pour pointer le champ,<br>
+                ou <strong>dessinez la parcelle</strong> avec l'outil ✏️
+            </p>
+        </div>
+
+        <div class="panel-section">
+            <h3>✏️ Saisie manuelle des coordonnées</h3>
+            <div class="coords-grid">
+                <div><label>Latitude</label><input type="number" id="manual-lat" placeholder="33.9716" step="0.0001"></div>
+                <div><label>Longitude</label><input type="number" id="manual-lon" placeholder="-6.8498" step="0.0001"></div>
+            </div>
+            <button class="btn-apply-coords" onclick="appliquerCoordsManuelle()">📍 Aller à ces coordonnées</button>
+        </div>
+
+        <div class="panel-section" id="loc-info" style="display:none;">
+            <h3>📍 Localisation sélectionnée</h3>
+            <div class="info-row"><span class="key">Latitude</span><span class="value" id="info-lat">-</span></div>
+            <div class="info-row"><span class="key">Longitude</span><span class="value" id="info-lon">-</span></div>
+            <div class="info-row" id="surface-drawn-row" style="display:none;">
+                <span class="key">Surface dessinée</span><span class="value" id="info-surface-drawn">-</span>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <h3>📐 Surface de la parcelle</h3>
+            <div class="surface-row">
+                <input type="number" id="surface" placeholder="Ex: 2.5" min="0.01" step="0.1">
+                <select id="surface-unit">
+                    <option value="ha">Hectares (ha)</option>
+                    <option value="m2">Mètres² (m²)</option>
+                    <option value="acre">Acres</option>
+                </select>
+            </div>
+            <p class="hint" style="margin-top:6px;">💡 Si vous dessinez la parcelle, la surface est calculée automatiquement.</p>
+        </div>
+
+        <div class="panel-section">
+            <h3>🌱 Culture souhaitée</h3>
+            <select class="culture-select" id="culture">
+                <option value="">🤖 Automatique (recommandée par l'IA)</option>
+                <optgroup label="── Céréales ──">
+                    <option value="rice">🌾 Riz</option><option value="maize">🌽 Maïs</option>
+                    <option value="blé">🌾 Blé</option><option value="orge">🌾 Orge</option>
+                </optgroup>
+                <optgroup label="── Légumineuses ──">
+                    <option value="chickpea">🫘 Pois chiche</option><option value="lentil">🍃 Lentille</option>
+                    <option value="kidneybeans">🫘 Haricots rouges</option><option value="mungbean">🫘 Haricot mungo</option>
+                    <option value="blackgram">🫘 Black gram</option><option value="pigeonpeas">🫛 Pois d'Angole</option>
+                    <option value="mothbeans">🫘 Moth beans</option>
+                </optgroup>
+                <optgroup label="── Fruits ──">
+                    <option value="pomegranate">🍎 Grenade</option><option value="banana">🍌 Banane</option>
+                    <option value="mango">🥭 Mangue</option><option value="grapes">🍇 Raisin</option>
+                    <option value="watermelon">🍉 Pastèque</option><option value="muskmelon">🍈 Melon</option>
+                    <option value="apple">🍎 Pomme</option><option value="orange">🍊 Orange</option>
+                    <option value="papaya">🍑 Papaye</option><option value="coconut">🥥 Coco</option>
+                </optgroup>
+                <optgroup label="── Maroc ──">
+                    <option value="olive">🫒 Olive</option><option value="tomate">🍅 Tomate</option>
+                    <option value="tournesol">🌻 Tournesol</option><option value="pomme_de_terre">🥔 Pomme de terre</option>
+                </optgroup>
+                <optgroup label="── Autres ──">
+                    <option value="cotton">🌿 Coton</option><option value="jute">🌿 Jute</option>
+                    <option value="coffee">☕ Café</option>
+                </optgroup>
+            </select>
+            <p class="hint" style="margin-top:5px;">
+                💡 <strong>Automatique</strong> : l'IA choisit la meilleure culture.<br>
+                <strong>Manuelle</strong> : l'IA calcule les doses optimales pour votre culture.
+            </p>
+        </div>
+
+        <button class="btn-predict" id="btn-predict" onclick="predict()" disabled>⚡ Analyser ce champ</button>
+        <p class="hint" id="predict-hint">👆 Cliquez sur la carte ou entrez les coordonnées pour commencer</p>
+
+    </div>
+
+    <!-- ══ CARTE ══ -->
+    <div class="map-wrapper">
+
+        <div id="map"></div>
+
+        <div class="ndvi-badge" id="ndvi-badge">🛰️ Calcul NDVI en cours...</div>
+
+        <!-- Résultats -->
+        <div class="results-overlay" id="results">
+            <div class="results-header">
+                <div class="res-emoji" id="res-emoji">🌱</div>
+                <div>
+                    <div class="res-title" id="res-culture">-</div>
+                    <div class="res-sub">Culture recommandée · IA XGBoost</div>
+                    <div class="res-sub" id="res-time"></div>
+                </div>
+                <div class="res-conf"><div class="v" id="res-conf">-</div><div class="l">Confiance</div></div>
+            </div>
+            <div class="results-body">
+                <p style="font-size:11px;color:#888;margin-bottom:6px;font-weight:600;">RECOMMANDATIONS PAR HECTARE</p>
+                <div class="metrics-grid">
+                    <div class="metric" style="border-color:#0077b6;"><div class="icon">💧</div><div class="val" id="res-irr">-</div><div class="unit">mm / semaine</div><div class="lbl">Irrigation</div></div>
+                    <div class="metric" style="border-color:#52b788;"><div class="icon">🟢</div><div class="val" id="res-n">-</div><div class="unit">kg / ha</div><div class="lbl">Azote (N)</div></div>
+                    <div class="metric" style="border-color:#f4a261;"><div class="icon">🟡</div><div class="val" id="res-p">-</div><div class="unit">kg / ha</div><div class="lbl">Phosphore (P)</div></div>
+                    <div class="metric" style="border-color:#e76f51;"><div class="icon">🔴</div><div class="val" id="res-k">-</div><div class="unit">kg / ha</div><div class="lbl">Potassium (K)</div></div>
+                </div>
+                <div class="totaux" id="totaux-section" style="display:none">
+                    <h4>📐 Total pour votre parcelle (<span id="tot-surface">-</span>)</h4>
+                    <div class="totaux-grid">
+                        <div class="totaux-item">💧 Eau totale<br><span class="tv" id="tot-eau">-</span></div>
+                        <div class="totaux-item">🟢 Azote total<br><span class="tv" id="tot-n">-</span></div>
+                        <div class="totaux-item">🟡 Phosphore total<br><span class="tv" id="tot-p">-</span></div>
+                        <div class="totaux-item">🔴 Potassium total<br><span class="tv" id="tot-k">-</span></div>
+                    </div>
+                </div>
+                <!-- ── SECTION ENGRAIS ── -->
+                <div id="engrais-section" style="display:none;margin-bottom:8px;"></div>
+
+                <p style="font-size:11px;color:#888;margin:8px 0 6px;font-weight:600;">CONDITIONS TERRAIN</p>
+                <div class="cond-row"><span class="k">🌡️ Température</span><span class="v" id="res-temp">-</span></div>
+                <div class="cond-row"><span class="k">💧 Humidité</span><span class="v" id="res-hum">-</span></div>
+                <div class="cond-row"><span class="k">🌧️ Pluie 30j</span><span class="v" id="res-rain">-</span></div>
+                <div class="cond-row"><span class="k">⚗️ pH sol</span><span class="v" id="res-ph">-</span></div>
+                <div class="ndvi-bar-wrap">
+                    <div style="display:flex;justify-content:space-between;font-size:11px;color:#888;">
+                        <span>🌿 NDVI — Santé végétation</span><span id="res-ndvi">-</span>
+                    </div>
+                    <div class="ndvi-bar-bg"><div class="ndvi-bar-fill" id="ndvi-fill" style="width:0%"></div></div>
+                </div>
+                <button class="btn-close" onclick="closeResults()">✕ Fermer et faire une nouvelle analyse</button>
+            </div>
+        </div>
+
+        <!-- Fiche NDVI détaillée -->
+        <div class="ndvi-fiche" id="ndvi-fiche">
+            <div style="font-weight:700;font-size:13px;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,.2);padding-bottom:7px;">
+                📊 Analyse NDVI — Parcelle
+            </div>
+            <div style="text-align:center;margin-bottom:10px;">
+                <div style="font-size:30px;font-weight:700;color:#52b788;" id="fiche-val">-</div>
+                <div style="font-size:11px;opacity:.8;">Indice de végétation moyen</div>
+                <div id="fiche-sante" style="margin-top:6px;padding:3px 10px;border-radius:20px;font-weight:600;font-size:11px;display:inline-block;">-</div>
+            </div>
+            <div style="margin-bottom:8px;">
+                <div style="display:flex;justify-content:space-between;font-size:10px;opacity:.7;margin-bottom:3px;"><span>Sol nu</span><span>Dense</span></div>
+                <div style="height:10px;border-radius:5px;overflow:hidden;background:linear-gradient(to right,#d73027,#fdae61,#d9ef8b,#66bd63,#006837);"></div>
+                <div style="position:relative;height:8px;">
+                    <div id="fiche-cursor" style="position:absolute;top:0;transform:translateX(-50%);width:3px;height:8px;background:white;border-radius:2px;box-shadow:0 0 4px rgba(0,0,0,.6);transition:left .5s;"></div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;font-size:11px;margin-top:6px;">
+                <div style="opacity:.7;">📡 Source</div><div>Sentinel-2</div>
+                <div style="opacity:.7;">🖼️ Images</div><div id="fiche-nb-img">-</div>
+                <div style="opacity:.7;">📐 Résolution</div><div>10 m/pixel</div>
+                <div style="opacity:.7;">📅 Période</div><div>30 derniers jours</div>
+            </div>
+            <button onclick="supprimerNDVI()" style="width:100%;margin-top:10px;padding:7px;background:rgba(255,255,255,.12);color:white;border:1px solid rgba(255,255,255,.25);border-radius:6px;cursor:pointer;font-size:11px;">
+                ✕ Fermer carte NDVI
+            </button>
+        </div>
+
+    </div><!-- fin .map-wrapper -->
+
+</div><!-- fin .main -->
+
+<div class="loading-overlay" id="loading">
+    <div class="spinner"></div>
+    <div style="font-size:17px;font-weight:600;">Analyse en cours...</div>
+    <div class="loading-steps" id="loading-step">Connexion NASA POWER...</div>
+    <div style="font-size:11px;opacity:.6;margin-top:10px;">NASA + Sentinel-2 + SoilGrids → XGBoost</div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+// VARIABLES GLOBALES
+// ══════════════════════════════════════════════════════════
+let map, marker, drawnLayer, drawnSurfaceHa, drawnItems;
+let selectedLat = null, selectedLon = null;
+let ndviLayers  = [];
+let legendDiv   = null;
+
+// ══════════════════════════════════════════════════════════
+// INIT CARTE — après chargement complet du DOM
+// ══════════════════════════════════════════════════════════
+window.addEventListener('load', function() {
+
+    map = L.map('map', { center:[31.7917,-7.0926], zoom:6 });
+
+    const satellite = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+        { attribution:'© Google Maps', maxZoom:20 });
+    const hybride   = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+        { attribution:'© Google Maps', maxZoom:20 });
+    satellite.addTo(map);
+    L.control.layers({ '🛰️ Satellite':satellite, '🗺️ Hybride':hybride }).addTo(map);
+
+    // FIX FINAL : forcer le recalcul de la taille
+    map.invalidateSize();
+
+    // Légende NDVI (Leaflet control)
+    const legendCtrl = L.control({ position:'bottomleft' });
+    legendCtrl.onAdd = () => {
+        legendDiv = L.DomUtil.create('div');
+        legendDiv.style.cssText = `background:rgba(255,255,255,.96);padding:12px 14px;
+            border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.2);
+            font-size:11px;line-height:1.9;display:none;min-width:178px;`;
+        return legendDiv;
+    };
+    legendCtrl.addTo(map);
+
+    // Clic carte
+    map.on('click', e => {
+        if (map._toolbars && Object.keys(map._toolbars).some(k =>
+            map._toolbars[k]._activeMode)) return;
+        if (drawnLayer) return;
+        setLocation(e.latlng.lat, e.latlng.lng);
+    });
+
+    // Dessin parcelle
+    drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+    const drawCtrl = new L.Control.Draw({
+        edit: { featureGroup: drawnItems },
+        draw: {
+            polygon  : { shapeOptions:{ color:'#52b788', fillOpacity:0.25 } },
+            rectangle: { shapeOptions:{ color:'#52b788', fillOpacity:0.25 } },
+            polyline:false, circle:false, marker:false, circlemarker:false
+        }
+    });
+    map.addControl(drawCtrl);
+
+    map.on(L.Draw.Event.CREATED, e => {
+        drawnItems.clearLayers();
+        drawnLayer = e.layer;
+        drawnItems.addLayer(drawnLayer);
+        const center  = drawnLayer.getBounds().getCenter();
+        const ll      = drawnLayer.getLatLngs()[0];
+        const m2      = calcSurface(ll);
+        drawnSurfaceHa = m2 / 10000;
+        setLocation(center.lat, center.lng);
+        document.getElementById('info-surface-drawn').textContent =
+            drawnSurfaceHa.toFixed(2) + ' ha (' + Math.round(m2) + ' m²)';
+        document.getElementById('surface-drawn-row').style.display = 'flex';
+        document.getElementById('surface').value      = drawnSurfaceHa.toFixed(2);
+        document.getElementById('surface-unit').value = 'ha';
+    });
+    map.on(L.Draw.Event.DELETED, () => {
+        drawnLayer = null; drawnSurfaceHa = null;
+        document.getElementById('surface-drawn-row').style.display = 'none';
+    });
+
+    window.addEventListener('resize', () => map.invalidateSize());
+});
+
+// ══════════════════════════════════════════════════════════
+// LOCALISATION
+// ══════════════════════════════════════════════════════════
+function setLocation(lat, lon) {
+    selectedLat = lat; selectedLon = lon;
+    if (marker) map.removeLayer(marker);
+    marker = L.marker([lat,lon], {
+        icon: L.divIcon({ html:'<div style="font-size:26px;transform:translate(-50%,-100%)">📍</div>', iconSize:[0,0] })
+    }).addTo(map);
+    document.getElementById('info-lat').textContent       = lat.toFixed(5);
+    document.getElementById('info-lon').textContent       = lon.toFixed(5);
+    document.getElementById('loc-info').style.display     = 'block';
+    document.getElementById('btn-predict').disabled       = false;
+    document.getElementById('predict-hint').style.display = 'none';
+    document.getElementById('manual-lat').value           = lat.toFixed(5);
+    document.getElementById('manual-lon').value           = lon.toFixed(5);
+}
+
+function appliquerCoordsManuelle() {
+    const lat = parseFloat(document.getElementById('manual-lat').value);
+    const lon = parseFloat(document.getElementById('manual-lon').value);
+    if (isNaN(lat)||isNaN(lon))   { alert('⚠️ Coordonnées invalides.'); return; }
+    if (lat<-90||lat>90)          { alert('⚠️ Latitude : -90 à +90'); return; }
+    if (lon<-180||lon>180)        { alert('⚠️ Longitude : -180 à +180'); return; }
+    map.setView([lat,lon], 14);
+    setLocation(lat, lon);
+}
+document.addEventListener('DOMContentLoaded', () => {
+    ['manual-lat','manual-lon'].forEach(id =>
+        document.getElementById(id)?.addEventListener('keydown', e => {
+            if (e.key==='Enter') appliquerCoordsManuelle();
+        })
+    );
+});
+
+async function searchAddress() {
+    const q = document.getElementById('search-input').value.trim();
+    if (!q) return;
+    try {
+        const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`,
+            { headers:{'Accept-Language':'fr'} });
+        const d = await r.json();
+        if (d.length) { map.setView([+d[0].lat,+d[0].lon],13); setLocation(+d[0].lat,+d[0].lon); }
+        else alert('Adresse non trouvée.');
+    } catch { alert('Erreur de recherche.'); }
+}
+function useMyLocation() {
+    if (!navigator.geolocation) { alert('Géolocalisation non supportée.'); return; }
+    navigator.geolocation.getCurrentPosition(
+        p => { map.setView([p.coords.latitude,p.coords.longitude],14); setLocation(p.coords.latitude,p.coords.longitude); },
+        () => alert("Impossible d'obtenir votre position.")
+    );
+}
+function calcSurface(ll) {
+    const R=6371000; let a=0, n=ll.length;
+    for (let i=0;i<n;i++) {
+        const j=(i+1)%n;
+        const xi=ll[i].lng*Math.PI/180, yi=ll[i].lat*Math.PI/180;
+        const xj=ll[j].lng*Math.PI/180, yj=ll[j].lat*Math.PI/180;
+        a += (xj-xi)*(2+Math.sin(yi)+Math.sin(yj));
+    }
+    return Math.abs(a*R*R/2);
+}
+
+// ══════════════════════════════════════════════════════════
+// NDVI — PALETTE, LABELS, FICHE
+// ══════════════════════════════════════════════════════════
+function ndviColor(v) {
+    if(v<0)   return '#2166ac';
+    if(v<0.1) return '#d73027';
+    if(v<0.2) return '#f46d43';
+    if(v<0.3) return '#fdae61';
+    if(v<0.4) return '#fee08b';
+    if(v<0.5) return '#d9ef8b';
+    if(v<0.6) return '#a6d96a';
+    if(v<0.7) return '#66bd63';
+    if(v<0.8) return '#1a9850';
+    return '#006837';
+}
+function ndviLabel(v) {
+    if(v<0)   return '💧 Eau / Imperméable';
+    if(v<0.1) return '🏜️ Sol nu';
+    if(v<0.2) return '🌾 Végétation très faible';
+    if(v<0.3) return '🌱 Végétation faible';
+    if(v<0.4) return '🌿 Végétation modérée';
+    if(v<0.5) return '🌿 Végétation correcte';
+    if(v<0.6) return '🌳 Bonne végétation';
+    if(v<0.7) return '🌳 Très bonne végétation';
+    return '🌲 Végétation dense';
+}
+function ndviSante(v) {
+    if(v<0)   return { bg:'#e74c3c22',bd:'#e74c3c',c:'#c0392b',t:'🔴 Sol nu / Eau' };
+    if(v<0.2) return { bg:'#e67e2222',bd:'#e67e22',c:'#d35400',t:'🟠 Très faible' };
+    if(v<0.4) return { bg:'#f1c40f22',bd:'#f1c40f',c:'#b7950b',t:'🟡 Modérée' };
+    if(v<0.6) return { bg:'#2ecc7122',bd:'#2ecc71',c:'#1e8449',t:'🟢 Bonne' };
+    return            { bg:'#27ae6022',bd:'#27ae60',c:'#1a5e34',t:'💚 Dense' };
+}
+
+function supprimerNDVI() {
+    ndviLayers.forEach(l => map.removeLayer(l)); ndviLayers = [];
+    if (legendDiv) legendDiv.style.display = 'none';
+    document.getElementById('ndvi-fiche').style.display = 'none';
+    document.getElementById('ndvi-badge').style.display = 'none';
+}
+
+function pointDansPolygone(pt, poly) {
+    // Utilise longitude/latitude dans le bon ordre pour le test de point à l'intérieur d'un polygone.
+    const x = pt.lng, y = pt.lat, n = poly.length; let ins = false;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+        const xi = poly[i].lng, yi = poly[i].lat;
+        const xj = poly[j].lng, yj = poly[j].lat;
+        if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) ins = !ins;
+    }
+    return ins;
+}
+
+async function afficherNDVI(lat, lon) {
+    supprimerNDVI();
+    const badge = document.getElementById('ndvi-badge');
+    badge.style.display = 'block';
+    badge.textContent   = '🛰️ Calcul NDVI en cours...';
+
+    try {
+        const body = { latitude: lat, longitude: lon };
+        if (drawnLayer) {
+            const ll = drawnLayer.getLatLngs();
+            const coord = Array.isArray(ll[0]) ? ll[0] : ll;
+            body.polygon = coord.map(p => [p.lat, p.lng]);
+        }
+
+        const resp = await fetch('http://127.0.0.1:8000/ndvi_tile', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(body)
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => null);
+            badge.textContent = err?.detail || '❌ Erreur NDVI';
+            setTimeout(()=>badge.style.display='none', 3000);
+            return;
+        }
+        const data = await resp.json();
+
+        if (!data.tile_url) {
+            badge.textContent = '⚠️ Pas d\'image satellite disponible';
+            setTimeout(()=>badge.style.display='none', 3000);
+            return;
+        }
+
+        let tileUrl = data.tile_url;
+        if (data.token) {
+            tileUrl += `?token=${encodeURIComponent(data.token)}`;
+        }
+
+        const tileLayer = L.tileLayer(tileUrl, {
+            opacity: 0.72,
+            attribution: '🛰️ NDVI Sentinel-2',
+            maxZoom: 20
+        }).addTo(map);
+        ndviLayers.push(tileLayer);
+
+        const ndviMoyen = data.ndvi_mean;
+        document.getElementById('res-ndvi').textContent  = ndviMoyen;
+        document.getElementById('ndvi-fill').style.width = Math.max(0, ndviMoyen * 100) + '%';
+
+        // Légende bas gauche
+        if (legendDiv) {
+            legendDiv.style.display = 'block';
+            legendDiv.innerHTML = `
+                <div style="font-weight:700;color:#1b4332;font-size:12px;margin-bottom:6px;">🛰️ NDVI — Indice de végétation</div>
+                <div style="padding:5px 8px;background:#f0f7f0;border-radius:6px;border-left:3px solid #52b788;margin-bottom:7px;">
+                    <span style="font-size:10px;color:#666;">Valeur moyenne parcelle</span><br>
+                    <span style="font-size:15px;font-weight:700;color:#1b4332;">${ndviMoyen}</span>
+                    <span style="font-size:10px;color:#2d6a4f;margin-left:3px;">${ndviLabel(ndviMoyen)}</span>
+                </div>
+                <div style="display:grid;gap:2px;font-size:11px;">
+                    <div><span style="background:#2166ac;color:white;padding:1px 7px;border-radius:3px">&lt;0</span> Eau</div>
+                    <div><span style="background:#d73027;color:white;padding:1px 7px;border-radius:3px">0–0.1</span> Sol nu</div>
+                    <div><span style="background:#fdae61;padding:1px 7px;border-radius:3px">0.1–0.3</span> Faible</div>
+                    <div><span style="background:#d9ef8b;padding:1px 7px;border-radius:3px">0.3–0.5</span> Modérée</div>
+                    <div><span style="background:#66bd63;color:white;padding:1px 7px;border-radius:3px">0.5–0.7</span> Bonne</div>
+                    <div><span style="background:#006837;color:white;padding:1px 7px;border-radius:3px">&gt;0.7</span> Dense</div>
+                </div>
+                <div style="color:#888;margin-top:5px;font-size:10px;border-top:1px solid #e9ecef;padding-top:4px;">
+                    📡 Sentinel-2 ESA · ${data.nb_images} image(s)
+                </div>`;
+        }
+
+        // Fiche NDVI détaillée
+        const s   = ndviSante(ndviMoyen);
+        const pct = Math.round(Math.max(0,Math.min(1,(ndviMoyen+0.2)/1.2))*100);
+        document.getElementById('fiche-val').textContent    = ndviMoyen;
+        document.getElementById('fiche-nb-img').textContent = data.nb_images;
+        document.getElementById('fiche-cursor').style.left  = pct+'%';
+        const santeEl = document.getElementById('fiche-sante');
+        santeEl.textContent  = s.t;
+        santeEl.style.cssText= `margin-top:6px;padding:3px 10px;border-radius:20px;font-weight:600;font-size:11px;display:inline-block;background:${s.bg};border:1px solid ${s.bd};color:${s.c};`;
+        const ficheEl = document.getElementById('ndvi-fiche');
+        ficheEl.style.display = 'block';
+        // Repositionner la fiche verte juste au-dessus de la légende blanche
+        setTimeout(() => {
+            if (legendDiv && legendDiv.offsetHeight) {
+                ficheEl.style.bottom = (legendDiv.offsetHeight + 20) + 'px';
+            }
+        }, 100);
+
+    } catch(e) {
+        console.error('NDVI error:', e);
+        badge.textContent = '❌ Erreur NDVI';
+        setTimeout(()=>badge.style.display='none', 3000);
+    }
+    badge.style.display = 'none';
+}
+
+// ══════════════════════════════════════════════════════════
+// PRÉDICTION
+// ══════════════════════════════════════════════════════════
+const EMOJIS = {
+    rice:'🌾',maize:'🌽',chickpea:'🫘',kidneybeans:'🫘',pigeonpeas:'🫛',
+    mothbeans:'🫘',mungbean:'🫘',blackgram:'🫘',lentil:'🍃',pomegranate:'🍎',
+    banana:'🍌',mango:'🥭',grapes:'🍇',watermelon:'🍉',muskmelon:'🍈',
+    apple:'🍎',orange:'🍊',papaya:'🍑',coconut:'🥥',cotton:'🌿',
+    jute:'🌿',coffee:'☕',olive:'🫒',tomate:'🍅',tournesol:'🌻',
+    pomme_de_terre:'🥔','blé':'🌾',orge:'🌾'
+};
+const STEPS = [
+    '📡 Connexion NASA POWER...','🛰️  Calcul NDVI Sentinel-2...',
+    '🌱 Récupération données sol...','🤖 Analyse XGBoost...','✅ Génération recommandations...'
+];
+
+async function predict() {
+    if (!selectedLat||!selectedLon) return;
+    const loadEl = document.getElementById('loading');
+    const stepEl = document.getElementById('loading-step');
+    loadEl.classList.add('show');
+    document.getElementById('btn-predict').disabled = true;
+    let idx=0;
+    const si = setInterval(()=>{ stepEl.textContent=STEPS[idx%STEPS.length]; idx++; }, 4000);
+
+    try {
+        const body = { latitude:selectedLat, longitude:selectedLon };
+        const cult = document.getElementById('culture').value;
+        if (cult) body.culture = cult;
+
+        const resp = await fetch('http://127.0.0.1:8000/predict', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(body)
+        });
+        if (!resp.ok) throw new Error('API '+resp.status);
+        const d = await resp.json();
+
+        document.getElementById('res-emoji').textContent   = EMOJIS[d.culture_recommandee]||'🌱';
+        document.getElementById('res-culture').textContent = d.culture_recommandee;
+        document.getElementById('res-conf').textContent    = d.confiance_pct+'%';
+        document.getElementById('res-irr').textContent     = d.irrigation_mm;
+        document.getElementById('res-n').textContent       = d.N_kg_ha;
+        document.getElementById('res-p').textContent       = d.P_kg_ha;
+        document.getElementById('res-k').textContent       = d.K_kg_ha;
+        document.getElementById('res-temp').textContent    = d.temperature+' °C';
+        document.getElementById('res-hum').textContent     = d.humidity+' %';
+        document.getElementById('res-rain').textContent    = d.rainfall+' mm';
+        document.getElementById('res-ph').textContent      = d.ph;
+        document.getElementById('res-ndvi').textContent    = d.ndvi;
+        document.getElementById('ndvi-fill').style.width   = Math.max(0,d.ndvi*100)+'%';
+        document.getElementById('res-time').textContent    = new Date(d.timestamp).toLocaleString('fr-FR');
+
+        const sv = parseFloat(document.getElementById('surface').value);
+        const su = document.getElementById('surface-unit').value;
+        let ha=0;
+        if(!isNaN(sv)&&sv>0){ if(su==='ha')ha=sv; if(su==='m2')ha=sv/10000; if(su==='acre')ha=sv*0.4047; }
+        if(ha>0){
+            document.getElementById('totaux-section').style.display='block';
+            document.getElementById('tot-surface').textContent=ha.toFixed(2)+' ha';
+            document.getElementById('tot-eau').textContent=(d.irrigation_mm*ha*10000/1000).toFixed(0)+' m³';
+            document.getElementById('tot-n').textContent=(d.N_kg_ha*ha).toFixed(1)+' kg';
+            document.getElementById('tot-p').textContent=(d.P_kg_ha*ha).toFixed(1)+' kg';
+            document.getElementById('tot-k').textContent=(d.K_kg_ha*ha).toFixed(1)+' kg';
+        } else { document.getElementById('totaux-section').style.display='none'; }
+
+        // ── Recommandation engrais ──────────────────────────────
+        const engraisSection = document.getElementById('engrais-section');
+        if (d.engrais && d.engrais.length > 0) {
+            let html = `<p style="font-size:11px;color:#888;font-weight:600;margin-bottom:6px;">🧪 TYPE D'ENGRAIS RECOMMANDÉ</p>`;
+
+            d.engrais.forEach(e => {
+                html += `
+                <div style="background:#f8f9fa;border-radius:10px;padding:10px;
+                            margin-bottom:7px;border-left:4px solid ${e.couleur};">
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+                        <span style="font-size:12px;font-weight:600;color:#1b4332;">${e.emoji} ${e.nutriment}</span>
+                        <span style="font-size:10px;background:#e8f5e9;color:#2d6a4f;
+                                     padding:1px 6px;border-radius:10px;">${e.besoin_kg_ha} kg/ha besoin</span>
+                    </div>
+                    <div style="font-size:13px;font-weight:700;color:#1b4332;">${e.engrais}</div>
+                    <div style="font-size:11px;color:#666;margin:2px 0;">
+                        Formule : <strong>${e.formule}</strong>
+                    </div>
+                    <div style="background:#e8f5e9;border-radius:7px;padding:6px 10px;
+                                margin:5px 0;display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:18px;">📦</span>
+                        <div>
+                            <div style="font-size:14px;font-weight:700;color:#1b4332;">
+                                ${e.quantite_kg_ha} kg/ha
+                            </div>
+                            <div style="font-size:10px;color:#666;">de produit commercial à appliquer</div>
+                        </div>
+                    </div>
+                    <div style="font-size:10px;color:#888;border-top:1px solid #e9ecef;
+                                padding-top:5px;margin-top:4px;">
+                        ⏰ ${e.moment}
+                    </div>
+                </div>`;
+            });
+
+            // Engrais complet alternatif
+            if (d.engrais_complet) {
+                const ec = d.engrais_complet;
+                html += `
+                <div style="background:#fff8e1;border-radius:10px;padding:10px;
+                            margin-bottom:7px;border-left:4px solid #f4a261;">
+                    <div style="font-size:11px;font-weight:600;color:#e65100;margin-bottom:3px;">
+                        💡 Alternative — Engrais complet
+                    </div>
+                    <div style="font-size:13px;font-weight:700;color:#bf360c;">
+                        ${ec.emoji} ${ec.engrais}
+                    </div>
+                    <div style="font-size:11px;color:#795548;margin:2px 0;">
+                        Formule : <strong>${ec.formule}</strong>
+                    </div>
+                    <div style="background:#fff3e0;border-radius:7px;padding:5px 10px;margin-top:5px;">
+                        <span style="font-size:13px;font-weight:700;color:#e65100;">
+                            📦 ${ec.quantite_kg_ha} kg/ha
+                        </span>
+                        <span style="font-size:10px;color:#795548;margin-left:4px;">
+                            — couvre N+P+K en une application
+                        </span>
+                    </div>
+                </div>`;
+            }
+
+            // Note agronomique
+            if (d.note_agronomique) {
+                html += `
+                <div style="background:#e3f2fd;border-radius:8px;padding:8px 10px;
+                            font-size:11px;color:#1565c0;line-height:1.5;">
+                    📝 ${d.note_agronomique}
+                </div>`;
+            }
+
+            engraisSection.innerHTML = html;
+            engraisSection.style.display = 'block';
+        } else {
+            engraisSection.style.display = 'none';
+        }
+
+        document.getElementById('results').style.display = 'block';
+        afficherNDVI(selectedLat, selectedLon);
+
+    } catch(e) {
+        alert('❌ Erreur : '+e.message+'\nVérifiez que l\'API tourne sur le port 8000.');
+    }
+    clearInterval(si);
+    loadEl.classList.remove('show');
+    document.getElementById('btn-predict').disabled = false;
+}
+
+function closeResults() {
+    document.getElementById('results').style.display = 'none';
+    supprimerNDVI();
+}
+</script>
+</body>
+</html>

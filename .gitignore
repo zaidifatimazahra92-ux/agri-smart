@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.egg-info/
+.DS_Store
+data/raw/
+notebooks/
+
+# IMPORTANT : ne jamais mettre la clé sur GitHub !
+service_account.json

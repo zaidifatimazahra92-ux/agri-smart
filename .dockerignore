@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+*.ipynb
+data/raw/
+notebooks/
+.env
+*.egg-info/
+.DS_Store
