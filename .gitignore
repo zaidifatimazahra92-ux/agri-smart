@@ -9,5 +9,6 @@ data/raw/
 notebooks/
 
 # IMPORTANT : ne jamais mettre la clé sur GitHub !
-service_account.jsonmodels/*.pkl
+service_account.json
+models/*.pkl
 data/processed/*.csv
